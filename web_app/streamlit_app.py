@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 
-# Etapas disponibles
 ETAPAS = [
     "En Cola", "Convertidora", "Guillotina",
     "Impresión GTOZ", "Impresión Komori", "Barnizado",
@@ -11,11 +10,9 @@ ETAPAS = [
     "Acabado Máquina", "Transporte", "OP Terminados"
 ]
 
-# Sesión de datos
 if "ops" not in st.session_state:
     st.session_state.ops = []
 
-# Función para exportar a Excel
 def exportar_excel(ops):
     output = BytesIO()
     df_rows = []
@@ -57,23 +54,72 @@ with st.expander("➕ Agregar nueva OP"):
             st.session_state.ops.append(op)
             st.success(f"OP {numero_op} agregada.")
 
-st.subheader("Órdenes en Proceso")
+st.subheader("Tablero Kanban")
 
-if st.session_state.ops:
-    for idx, op in enumerate(st.session_state.ops):
-        col1, col2 = st.columns([4, 1])
-        etapa_actual = op["etapas"][op["actual"]]
-        col1.markdown(f"**OP:** {op['numero_op']} - **Cliente:** {op['cliente']} - **Etapa actual:** {etapa_actual}")
-        if col2.button("Avanzar", key=f"avanzar_{idx}"):
-            actual_idx = op["actual"]
-            actual_etapa = op["etapas"][actual_idx]
-            op["tiempos"][actual_etapa][1] = datetime.now()
-            if actual_idx + 1 < len(op["etapas"]):
-                siguiente_etapa = op["etapas"][actual_idx + 1]
-                op["tiempos"][siguiente_etapa][0] = datetime.now()
-                op["actual"] += 1
-            else:
-                st.success(f"OP {op['numero_op']} finalizada.")
+# Agregar estilo CSS para scroll horizontal (swipe)
+st.markdown("""
+<style>
+.kanban-container {
+  display: flex;
+  overflow-x: auto;
+  padding: 10px 0;
+  gap: 15px;
+}
+.kanban-column {
+  flex: 0 0 250px;
+  background-color: #f0f2f6;
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 300px;
+}
+.kanban-card {
+  background: white;
+  padding: 8px;
+  margin-bottom: 10px;
+  border-radius: 5px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Crear contenedor Kanban horizontal
+kanban_html = '<div class="kanban-container">'
+
+for etapa in ETAPAS:
+    kanban_html += f'<div class="kanban-column"><h4>{etapa}</h4>'
+
+    # Mostrar las OP que están en esta etapa
+    ops_en_etapa = [op for op in st.session_state.ops if etapa in op["etapas"] and op["etapas"][op["actual"]] == etapa]
+
+    if ops_en_etapa:
+        for idx, op in enumerate(ops_en_etapa):
+            kanban_html += f'<div class="kanban-card"><b>OP:</b> {op["numero_op"]}<br><b>Cliente:</b> {op["cliente"]}</div>'
+
+    else:
+        kanban_html += "<i>Sin OP</i>"
+
+    kanban_html += '</div>'
+
+kanban_html += '</div>'
+
+st.markdown(kanban_html, unsafe_allow_html=True)
+
+# Botones para avanzar OP
+st.subheader("Mover OP a siguiente etapa")
+
+for idx, op in enumerate(st.session_state.ops):
+    etapa_actual = op["etapas"][op["actual"]]
+    st.markdown(f"**OP:** {op['numero_op']} - **Cliente:** {op['cliente']} - **Etapa actual:** {etapa_actual}")
+    if st.button(f"Avanzar OP {op['numero_op']}", key=f"avanzar_{idx}"):
+        actual_idx = op["actual"]
+        actual_etapa = op["etapas"][actual_idx]
+        op["tiempos"][actual_etapa][1] = datetime.now()
+        if actual_idx + 1 < len(op["etapas"]):
+            siguiente_etapa = op["etapas"][actual_idx + 1]
+            op["tiempos"][siguiente_etapa][0] = datetime.now()
+            op["actual"] += 1
+        else:
+            st.success(f"OP {op['numero_op']} finalizada.")
 
 st.subheader("Historial y Análisis")
 if st.button("Mostrar Historial"):
