@@ -11,6 +11,20 @@ import streamlit as st
 from datetime import datetime
 import sqlite3
 
+from io import BytesIO
+import pandas as pd
+import streamlit as st
+from datetime import datetime, timedelta
+# Funciones de BD
+
+
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+from io import BytesIO
+import hashlib
+import sqlite3
+
 # Funciones de BD
 def crear_base_datos():
     conn = sqlite3.connect('historial.db')
@@ -52,35 +66,6 @@ def obtener_historial():
 # Al iniciar la app
 crear_base_datos()
 
-st.title("Demo Historial Producción")
-
-# Formulario para ingresar datos de prueba
-with st.form("nuevo_registro"):
-    numero_ome = st.text_input("Número OME")
-    cliente = st.text_input("Cliente")
-    etapa = st.text_input("Etapa")
-    t_ini = st.text_input("Hora inicio (YYYY-MM-DD HH:MM:SS)")
-    t_fin = st.text_input("Hora fin (YYYY-MM-DD HH:MM:SS)")
-    duracion = st.number_input("Duración (segundos)", min_value=0)
-    submitted = st.form_submit_button("Guardar")
-
-    if submitted:
-        # Usamos fechas actuales como ejemplo para f_ini y f_fin
-        f_ini = t_ini.split(" ")[0] if t_ini else ""
-        f_fin = t_fin.split(" ")[0] if t_fin else ""
-        insertar_historial(numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion)
-        st.success("Registro guardado")
-
-# Botón para mostrar historial
-if st.button("Mostrar Historial"):
-    historial = obtener_historial()
-    st.write(historial)
-
-
-
-
-
-
 # Definición de etapas
 ETAPAS = [
     "En Cola", "Convertidora", "Guillotina",
@@ -89,50 +74,34 @@ ETAPAS = [
     "Acabado Máquina", "Transporte", "OP Terminados"
 ]
 
-
-
-
-
-
 # --- FUNCIONES AUXILIARES ---
 
 def hash_password(password):
-    """Hashea la contraseña para guardarla."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def check_password(username, password):
-    """Verifica si usuario y contraseña son correctos."""
     if "users" not in st.session_state:
         return False
     hashed = hash_password(password)
     user = st.session_state.users.get(username)
-    if user and user["password"] == hashed:
-        return True
-    return False
+    return user and user["password"] == hashed
 
 def user_role(username):
-    """Devuelve el rol del usuario."""
     return st.session_state.users.get(username, {}).get("role", None)
 
 def can_move_op(user, etapa_op):
-    """Determina si el usuario puede mover OP en la etapa dada."""
     role = user_role(user)
     if role in ["maestro", "planificador"]:
         return True
     elif role == "trabajador":
-        # El trabajador solo puede mover OP en SU etapa
-        etapa_usuario = st.session_state.users[user].get("etapa")
-        return etapa_usuario == etapa_op
+        return st.session_state.users[user].get("etapa") == etapa_op
     return False
 
 # --- INICIALIZACIÓN DE ESTADO ---
-
 if "users" not in st.session_state:
-    # Usuarios por defecto: admin maestro y planificador
     st.session_state.users = {
         "admin": {"password": hash_password("admin123"), "role": "maestro"},
         "planificador": {"password": hash_password("plan123"), "role": "planificador"},
-        # Ejemplo trabajador para Troquelado
         "trabajador_troquel": {"password": hash_password("troquel123"), "role": "trabajador", "etapa": "Troquelado"},
     }
 
@@ -144,10 +113,8 @@ if "ops" not in st.session_state:
     st.session_state.ops = []
 
 # --- LOGIN ---
-
 def login():
     st.title("Login - Kanban de Producción Lean")
-
     username = st.text_input("Usuario")
     password = st.text_input("Contraseña", type="password")
     if st.button("Ingresar"):
@@ -164,8 +131,18 @@ if not st.session_state.logged_in:
     st.stop()
 
 # --- PÁGINA PRINCIPAL ---
-
 st.title(f"KANBAN DE PRODUCCIÓN LEAN - Usuario: {st.session_state.username} ({user_role(st.session_state.username)})")
+
+# Mostrar historial si se presiona el botón
+if st.button("Mostrar Historial"):
+    historial = obtener_historial()
+    df_historial = pd.DataFrame(historial, columns=["Número OP", "Cliente", "Fecha Inicio", "Fecha Fin", "Etapa", "Inicio", "Fin", "Duración (min)"])
+    st.dataframe(df_historial)
+
+# Aquí continúa el código original para gestión de usuarios, agregar OPs, mostrar tablero Kanban, mover OPs, etc.
+# (omitido por brevedad pero sin modificar esa lógica)
+
+
 
 # --- ADMINISTRACIÓN DE USUARIOS (solo maestro) ---
 if user_role(st.session_state.username) == "maestro":
@@ -322,10 +299,6 @@ def exportar_excel(ops):
 
   # Tu función de base de datos
 
-from io import BytesIO
-import pandas as pd
-import streamlit as st
-from datetime import datetime, timedelta
 
 # --- HISTORIAL Y ANÁLISIS ---
 st.subheader("📜 Historial de Producción")
