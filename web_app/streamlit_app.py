@@ -244,6 +244,12 @@ def exportar_excel(ops):
 
   # Tu función de base de datos
 
+from io import BytesIO
+import pandas as pd
+import streamlit as st
+from datetime import datetime, timedelta
+
+# --- HISTORIAL Y ANÁLISIS ---
 st.subheader("📜 Historial de Producción")
 
 # Filtros
@@ -271,60 +277,67 @@ if st.button("Mostrar Historial"):
                 historial.append({
                     "Número OP": numero_ome,
                     "Cliente": cliente,
-                    "Fecha Inicio": entrada.strftime("%Y-%m-%d"),
-                    "Hora Inicio": entrada.strftime("%H:%M:%S"),
                     "Etapa": etapa,
-                    "Duración (seg)": duracion  # en segundos
+                    "Entrada": entrada,
+                    "Salida": salida,
+                    "Duración (min)": dur_min
                 })
 
-        df = pd.DataFrame(historial)
-
-        if df.empty:
+        if not historial:
             st.warning("⚠️ No hay datos para el rango seleccionado.")
         else:
-            # Pivotear: etapas como columnas
-            df_pivot = df.pivot_table(index=["Número OP", "Cliente", "Fecha Inicio", "Hora Inicio"],
-                                      columns="Etapa",
-                                      values="Duración (seg)",
-                                      aggfunc="sum").fillna(0)
+            df = pd.DataFrame(historial)
 
-            # Total y eficiencia
-            df_pivot["Total (seg)"] = df_pivot.sum(axis=1)
-            df_pivot["Total HH:MM:SS"] = df_pivot["Total (seg)"].apply(lambda x: str(timedelta(seconds=int(x))))
+            # Crear columnas dinámicas por etapa
+            etapas = df["Etapa"].unique()
+            registros = []
+
+            for (numero_op, cliente), group in df.groupby(["Número OP", "Cliente"]):
+                registro = {"Número OP": numero_op, "Cliente": cliente}
+                for _, fila in group.iterrows():
+                    etapa = fila["Etapa"]
+                    registro[f"{etapa} Entrada"] = fila["Entrada"].strftime("%Y-%m-%d %H:%M:%S")
+                    registro[f"{etapa} Salida"] = fila["Salida"].strftime("%Y-%m-%d %H:%M:%S")
+                    registro[f"{etapa} Duración"] = str(timedelta(minutes=fila["Duración (min)"]))
+                registros.append(registro)
+
+            df_final = pd.DataFrame(registros)
+
+            # Calcular Total y Eficiencia
+            def calcular_total_min(row):
+                total = 0
+                for etapa in etapas:
+                    valor = row.get(f"{etapa} Duración", None)
+                    if valor:
+                        partes = valor.split(':')
+                        minutos = int(partes[0]) * 60 + int(partes[1]) + int(partes[2]) / 60
+                        total += minutos
+                return total
+
+            df_final["Total (min)"] = df_final.apply(calcular_total_min, axis=1)
+            df_final["Total HH:MM:SS"] = df_final["Total (min)"].apply(lambda x: str(timedelta(minutes=x)))
             tiempo_ideal_seg = tiempo_ideal_min * 60
-            df_pivot["Eficiencia (%)"] = round((tiempo_ideal_seg / df_pivot["Total (seg)"]) * 100, 1)
+            df_final["Eficiencia (%)"] = round((tiempo_ideal_seg / (df_final["Total (min)"] * 60)) * 100, 1)
 
-            # Convertir cada columna a formato HH:MM:SS
-            for etapa_col in df_pivot.columns:
-                if etapa_col not in ["Total (seg)", "Eficiencia (%)", "Total HH:MM:SS"]:
-                    df_pivot[etapa_col] = df_pivot[etapa_col].apply(lambda x: str(timedelta(seconds=int(x))))
+            # Mostrar tabla
+            st.dataframe(df_final, use_container_width=True)
 
-            # Organizar columnas
-            df_pivot = df_pivot.reset_index()
-            columnas_ordenadas = ["Número OP", "Cliente", "Fecha Inicio", "Hora Inicio"] + \
-                                 [c for c in df_pivot.columns if c not in ["Número OP", "Cliente", "Fecha Inicio", "Hora Inicio"]]
-            df_pivot = df_pivot[columnas_ordenadas]
+            # Exportar a Excel
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_final.to_excel(writer, index=False, sheet_name='Historial')
+            st.download_button(
+                label="📥 Descargar Historial en Excel",
+                data=output.getvalue(),
+                file_name="historial_produccion.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-            # Mostrar
-            st.dataframe(df_pivot, use_container_width=True)
-
-            # Descargar como Excel
-            excel_buffer = pd.ExcelWriter("historial_temp.xlsx", engine="openpyxl")
-            df_pivot.to_excel(excel_buffer, index=False, sheet_name="Historial")
-            excel_buffer.close()
-
-            with open("historial_temp.xlsx", "rb") as f:
-                st.download_button(
-                    label="📥 Descargar Historial en Excel",
-                    data=f.read(),
-                    file_name="historial_produccion.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
     else:
         st.info("🔒 No tienes permiso para ver el historial completo.")
-
 else:
     st.info("Haz clic en 'Mostrar Historial' para ver los datos.")
+
 
 # --- OPCIÓN DE CERRAR SESIÓN ---
 if st.button("Cerrar sesión"):
