@@ -3,6 +3,79 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 import hashlib
+import streamlit as st
+import sqlite3
+import bcrypt
+
+# --- Configuración DB ---
+conn = sqlite3.connect('users.db', check_same_thread=False)
+c = conn.cursor()
+
+# Crear tabla usuarios si no existe
+c.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL
+    )
+''')
+conn.commit()
+
+# --- Función para registrar usuario ---
+def register_user(username, password):
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+    try:
+        c.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_hash))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False  # Usuario ya existe
+
+# --- Función para autenticar usuario ---
+def authenticate_user(username, password):
+    c.execute('SELECT password_hash FROM users WHERE username = ?', (username,))
+    result = c.fetchone()
+    if result:
+        stored_hash = result[0]
+        # Comparar hash con password ingresado
+        return bcrypt.checkpw(password.encode(), stored_hash)
+    else:
+        return False
+
+# --- Registro inicial de admin (ejecutar solo 1 vez para crear usuario) ---
+if 'init' not in st.session_state:
+    # Cambia aquí el usuario y clave para crear el primero
+    user_created = register_user('admin', 'admin123')
+    st.session_state['init'] = True
+    if user_created:
+        st.success('Usuario admin creado')
+    else:
+        st.info('Usuario admin ya existe')
+
+# --- Login ---
+st.title('Login')
+
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+
+if not st.session_state['logged_in']:
+    username = st.text_input('Usuario')
+    password = st.text_input('Contraseña', type='password')
+    if st.button('Ingresar'):
+        if authenticate_user(username, password):
+            st.session_state['logged_in'] = True
+            st.session_state['username'] = username
+            st.success(f'Bienvenido {username}!')
+            st.experimental_rerun()
+        else:
+            st.error('Usuario o contraseña incorrectos')
+else:
+    st.write(f'Usuario logueado: {st.session_state["username"]}')
+    if st.button('Cerrar sesión'):
+        st.session_state['logged_in'] = False
+        st.session_state.pop('username')
+        st.experimental_rerun()
+
 
 # Definición de etapas
 ETAPAS = [
