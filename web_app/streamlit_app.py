@@ -284,24 +284,58 @@ def exportar_excel(ops):
     for op in ops:
         for etapa, tiempos in op["tiempos"].items():
             entrada, salida = tiempos
-            duracion = (salida - entrada).total_seconds() / 60 if entrada and salida else None
-            df_rows.append({
-                "Número OP": op["numero_op"],
-                "Cliente": op["cliente"],
-                "Etapa": etapa,
-                "Entrada": entrada,
-                "Salida": salida,
-                "Duración (min)": round(duracion, 1) if duracion else ""
-            })
+            if entrada and salida:
+                duracion_min = (salida - entrada).total_seconds() / 60
+                df_rows.append({
+                    "Número OP": op["numero_op"],
+                    "Cliente": op["cliente"],
+                    "Etapa": etapa,
+                    "Entrada": entrada.strftime('%Y-%m-%d %H:%M:%S'),
+                    "Salida": salida.strftime('%Y-%m-%d %H:%M:%S'),
+                    "Duración (min)": round(duracion_min, 2)
+                })
+
+                # Insertar en base de datos
+                insertar_historial(
+                    numero_ome=op["numero_op"],
+                    cliente=op["cliente"],
+                    f_ini=min(t[0] for t in op["tiempos"].values() if t[0]).strftime('%Y-%m-%d'),
+                    f_fin=max(t[1] for t in op["tiempos"].values() if t[1]).strftime('%Y-%m-%d'),
+                    etapa=etapa,
+                    t_ini=entrada.strftime('%H:%M:%S'),
+                    t_fin=salida.strftime('%H:%M:%S'),
+                    duracion=round(duracion_min, 2)
+                )
+
     df = pd.DataFrame(df_rows)
     df.to_excel(output, index=False)
     return output
 
   # Tu función de base de datos
 
+if st.button("📥 Exportar historial de OPs a Excel"):
+    if st.session_state.ops:
+        excel_file = exportar_excel(st.session_state.ops)
+        st.download_button(
+            label="Descargar Excel",
+            data=excel_file,
+            file_name="historial_ops.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.warning("No hay OPs para exportar.")
+
 
 # --- HISTORIAL Y ANÁLISIS ---
 st.subheader("📜 Historial de Producción")
+if st.button("📜 Mostrar Historial desde la BD"):
+    registros = obtener_historial()
+    if registros:
+        df_historial = pd.DataFrame(registros, columns=["N° OP", "Cliente", "Fecha Inicio", "Fecha Fin", "Etapa", "Hora Inicio", "Hora Fin", "Duración (min)"])
+        st.dataframe(df_historial)
+    else:
+        st.info("No hay registros en el historial.")
+
 
 # Filtros
 col1, col2, col3 = st.columns(3)
@@ -313,7 +347,7 @@ with col3:
     tiempo_ideal_min = st.number_input("⏱️ Tiempo ideal por OP (min)", min_value=1, value=60)
 
 # Botón para mostrar historial
-if st.button("Mostrar Historial"):
+if st.button("Mostrar Historial General"):
 
     if user_role(st.session_state.username) in ["maestro", "planificador"]:
         historial_bruto = obtener_historial()
