@@ -6,7 +6,80 @@ import hashlib
 import pandas as pd
 from datetime import datetime, timedelta
 import streamlit as st
-from db import obtener_historial
+
+import streamlit as st
+from datetime import datetime
+import sqlite3
+
+# Funciones de BD
+def crear_base_datos():
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS historial_produccion (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero_ome TEXT,
+            cliente TEXT,
+            f_ini TEXT,
+            f_fin TEXT,
+            etapa TEXT,
+            t_ini TEXT,
+            t_fin TEXT,
+            duracion REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def insertar_historial(numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion):
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO historial_produccion (numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion))
+    conn.commit()
+    conn.close()
+
+def obtener_historial():
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion FROM historial_produccion')
+    registros = cursor.fetchall()
+    conn.close()
+    return registros
+
+# Al iniciar la app
+crear_base_datos()
+
+st.title("Demo Historial Producción")
+
+# Formulario para ingresar datos de prueba
+with st.form("nuevo_registro"):
+    numero_ome = st.text_input("Número OME")
+    cliente = st.text_input("Cliente")
+    etapa = st.text_input("Etapa")
+    t_ini = st.text_input("Hora inicio (YYYY-MM-DD HH:MM:SS)")
+    t_fin = st.text_input("Hora fin (YYYY-MM-DD HH:MM:SS)")
+    duracion = st.number_input("Duración (segundos)", min_value=0)
+    submitted = st.form_submit_button("Guardar")
+
+    if submitted:
+        # Usamos fechas actuales como ejemplo para f_ini y f_fin
+        f_ini = t_ini.split(" ")[0] if t_ini else ""
+        f_fin = t_fin.split(" ")[0] if t_fin else ""
+        insertar_historial(numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion)
+        st.success("Registro guardado")
+
+# Botón para mostrar historial
+if st.button("Mostrar Historial"):
+    historial = obtener_historial()
+    st.write(historial)
+
+
+
+
+
 
 # Definición de etapas
 ETAPAS = [
@@ -15,6 +88,11 @@ ETAPAS = [
     "Plastificado", "Troquelado", "Acabado Manual",
     "Acabado Máquina", "Transporte", "OP Terminados"
 ]
+
+
+
+
+
 
 # --- FUNCIONES AUXILIARES ---
 
@@ -150,24 +228,24 @@ st.subheader("Tablero Kanban")
 st.markdown("""
 <style>
 .kanban-container {
-  display: flex;
-  overflow-x: auto;
-  padding: 10px 0;
-  gap: 15px;
+display: flex;
+overflow-x: auto;
+padding: 10px 0;
+gap: 15px;
 }
 .kanban-column {
-  flex: 0 0 250px;
-  background-color: #f0f2f6;
-  border-radius: 8px;
-  padding: 10px;
-  min-height: 300px;
+flex: 0 0 250px;
+background-color: #f0f2f6;
+border-radius: 8px;
+padding: 10px;
+min-height: 300px;
 }
 .kanban-card {
-  background: white;
-  padding: 8px;
-  margin-bottom: 10px;
-  border-radius: 5px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+background: white;
+padding: 8px;
+margin-bottom: 10px;
+border-radius: 5px;
+box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
 }
 </style>
 """, unsafe_allow_html=True)
