@@ -46,7 +46,7 @@ st.title("Kanban de Producción (Streamlit)")
 with st.expander("➕ Agregar nueva OP"):
     cliente = st.text_input("Cliente", key="cliente")
     numero_op = st.text_input("Número OP", key="numero_op")
-    etapas_seleccionadas = st.multiselect("Seleccione etapas", ETAPAS, default=["En Cola", "Transporte", "OP Terminados"])
+    etapas_seleccionadas = st.multiselect("Seleccione etapas", ETAPAS, default=[])
     if st.button("Agregar OP"):
         if not cliente or not numero_op:
             st.error("Debe ingresar Cliente y Número OP.")
