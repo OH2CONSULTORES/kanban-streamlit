@@ -45,6 +45,52 @@ def crear_base_datos():
     conn.commit()
     conn.close()
 
+def crear_tabla_usuarios():
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            username TEXT PRIMARY KEY,
+            password TEXT,
+            role TEXT,
+            etapa TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def guardar_usuario(username, password, role, etapa=None):
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR REPLACE INTO usuarios (username, password, role, etapa)
+        VALUES (?, ?, ?, ?)
+    ''', (username, password, role, etapa))
+    conn.commit()
+    conn.close()
+
+def cargar_usuarios():
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT username, password, role, etapa FROM usuarios')
+    usuarios = cursor.fetchall()
+    conn.close()
+    user_dict = {}
+    for u, p, r, e in usuarios:
+        user_dict[u] = {"password": p, "role": r}
+        if r == "trabajador":
+            user_dict[u]["etapa"] = e
+    return user_dict
+
+
+def eliminar_usuario(username):
+    conn = sqlite3.connect('historial.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM usuarios WHERE username = ?', (username,))
+    conn.commit()
+    conn.close()
+
 def insertar_historial(numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion):
     conn = sqlite3.connect('historial.db')
     cursor = conn.cursor()
@@ -65,6 +111,7 @@ def obtener_historial():
 
 # Al iniciar la app
 crear_base_datos()
+crear_tabla_usuarios()
 
 # Definición de etapas
 ETAPAS = [
@@ -99,11 +146,15 @@ def can_move_op(user, etapa_op):
 
 # --- INICIALIZACIÓN DE ESTADO ---
 if "users" not in st.session_state:
-    st.session_state.users = {
-        "admin": {"password": hash_password("admin123"), "role": "maestro"},
-        "planificador": {"password": hash_password("plan123"), "role": "planificador"},
-        "trabajador_troquel": {"password": hash_password("troquel123"), "role": "trabajador", "etapa": "Troquelado"},
-    }
+    st.session_state.users = cargar_usuarios()
+    if not st.session_state.users:
+        st.session_state.users = {
+            "admin": {"password": hash_password("admin123"), "role": "maestro"},
+            "planificador": {"password": hash_password("plan123"), "role": "planificador"},
+            "trabajador_troquel": {"password": hash_password("troquel123"), "role": "trabajador", "etapa": "Troquelado"},
+        }
+        for usuario, data in st.session_state.users.items():
+            guardar_usuario(usuario, data["password"], data["role"], data.get("etapa"))
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -145,6 +196,7 @@ if st.button("Mostrar Historial"):
 
 
 # --- ADMINISTRACIÓN DE USUARIOS (solo maestro) ---
+# --- ADMINISTRACIÓN DE USUARIOS (solo maestro) ---
 if user_role(st.session_state.username) == "maestro":
     with st.expander("👤 Gestión de Usuarios (solo Maestro)"):
         st.subheader("Agregar nuevo usuario")
@@ -168,13 +220,37 @@ if user_role(st.session_state.username) == "maestro":
                 if rol_usuario == "trabajador":
                     usuario_data["etapa"] = etapa_trabajador
                 st.session_state.users[nuevo_usuario] = usuario_data
+
+                guardar_usuario(nuevo_usuario, usuario_data["password"], rol_usuario, etapa_trabajador)
+
                 st.success(f"Usuario '{nuevo_usuario}' creado con rol '{rol_usuario}'.")
+
         st.markdown("### Usuarios actuales")
-        df_usuarios = []
+
+        # Opcional: Filtros
+        filtro_rol = st.selectbox("Filtrar por rol", options=["Todos", "maestro", "planificador", "trabajador"])
+        filtro_etapa = st.selectbox("Filtrar por etapa", options=["Todos"] + ETAPAS)
+
+        usuarios_filtrados = []
         for u, data in st.session_state.users.items():
-            etapa = data.get("etapa", "")
-            df_usuarios.append({"Usuario": u, "Rol": data["role"], "Etapa (si trabajador)": etapa})
-        st.table(df_usuarios)
+            if filtro_rol != "Todos" and data["role"] != filtro_rol:
+                continue
+            if filtro_etapa != "Todos" and data.get("etapa") != filtro_etapa:
+                continue
+            usuarios_filtrados.append((u, data))
+
+        # Mostrar usuarios con botón de eliminar
+        for u, data in usuarios_filtrados:
+            cols = st.columns([3, 2, 3, 2])
+            cols[0].markdown(f"👤 **{u}**")
+            cols[1].markdown(f"🔒 {data['role']}")
+            cols[2].markdown(f"🏭 {data.get('etapa', '-')}")
+            if cols[3].button("🗑️ Eliminar", key=f"del_{u}"):
+                del st.session_state.users[u]
+                eliminar_usuario(u)
+                st.success(f"Usuario '{u}' eliminado.")
+                st.experimental_rerun()  # refrescar interfaz
+
 
 # --- AGREGAR NUEVA OP (solo maestro y planificador) ---
 if user_role(st.session_state.username) in ["maestro", "planificador"]:
@@ -347,7 +423,7 @@ with col3:
     tiempo_ideal_min = st.number_input("⏱️ Tiempo ideal por OP (min)", min_value=1, value=60)
 
 # Botón para mostrar historial
-if st.button("Mostrar Historial General"):
+if st.button("Mostrar Historial eneral"):
 
     if user_role(st.session_state.username) in ["maestro", "planificador"]:
         historial_bruto = obtener_historial()
