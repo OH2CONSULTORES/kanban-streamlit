@@ -3,79 +3,10 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 import hashlib
+import pandas as pd
+from datetime import datetime, timedelta
 import streamlit as st
-import sqlite3
-import bcrypt
-
-# --- Configuración DB ---
-conn = sqlite3.connect('users.db', check_same_thread=False)
-c = conn.cursor()
-
-# Crear tabla usuarios si no existe
-c.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL
-    )
-''')
-conn.commit()
-
-# --- Función para registrar usuario ---
-def register_user(username, password):
-    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-    try:
-        c.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_hash))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False  # Usuario ya existe
-
-# --- Función para autenticar usuario ---
-def authenticate_user(username, password):
-    c.execute('SELECT password_hash FROM users WHERE username = ?', (username,))
-    result = c.fetchone()
-    if result:
-        stored_hash = result[0]
-        # Comparar hash con password ingresado
-        return bcrypt.checkpw(password.encode(), stored_hash)
-    else:
-        return False
-
-# --- Registro inicial de admin (ejecutar solo 1 vez para crear usuario) ---
-if 'init' not in st.session_state:
-    # Cambia aquí el usuario y clave para crear el primero
-    user_created = register_user('admin', 'admin123')
-    st.session_state['init'] = True
-    if user_created:
-        st.success('Usuario admin creado')
-    else:
-        st.info('Usuario admin ya existe')
-
-# --- Login ---
-st.title('Login')
-
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-
-if not st.session_state['logged_in']:
-    username = st.text_input('Usuario')
-    password = st.text_input('Contraseña', type='password')
-    if st.button('Ingresar'):
-        if authenticate_user(username, password):
-            st.session_state['logged_in'] = True
-            st.session_state['username'] = username
-            st.success(f'Bienvenido {username}!')
-            st.experimental_rerun()
-        else:
-            st.error('Usuario o contraseña incorrectos')
-else:
-    st.write(f'Usuario logueado: {st.session_state["username"]}')
-    if st.button('Cerrar sesión'):
-        st.session_state['logged_in'] = False
-        st.session_state.pop('username')
-        st.experimental_rerun()
-
+from db import obtener_historial
 
 # Definición de etapas
 ETAPAS = [
@@ -311,35 +242,86 @@ def exportar_excel(ops):
     df.to_excel(output, index=False)
     return output
 
-st.subheader("Historial y Análisis")
-if st.button("Mostrar Historial"):
-    # Mostrar todo solo para maestro y planificador
-    if user_role(st.session_state.username) in ["maestro", "planificador"]:
-        historial = []
-        for op in st.session_state.ops:
-            for etapa, tiempos in op["tiempos"].items():
-                entrada, salida = tiempos
-                duracion = (salida - entrada).total_seconds() / 60 if entrada and salida else None
-                historial.append({
-                    "Número OP": op["numero_op"],
-                    "Cliente": op["cliente"],
-                    "Etapa": etapa,
-                    "Entrada": entrada.strftime("%Y-%m-%d %H:%M:%S") if entrada else "",
-                    "Salida": salida.strftime("%Y-%m-%d %H:%M:%S") if salida else "",
-                    "Duración (min)": round(duracion, 1) if duracion else ""
-                })
-        df_hist = pd.DataFrame(historial)
-        st.dataframe(df_hist)
+  # Tu función de base de datos
 
-        excel_data = exportar_excel(st.session_state.ops)
-        st.download_button(
-            label="📥 Descargar Historial en Excel",
-            data=excel_data,
-            file_name="historial_kanban.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+st.subheader("📜 Historial de Producción")
+
+# Filtros
+col1, col2, col3 = st.columns(3)
+with col1:
+    fecha_inicio = st.date_input("📅 Fecha de inicio", value=datetime.today())
+with col2:
+    fecha_fin = st.date_input("📅 Fecha de fin", value=datetime.today())
+with col3:
+    tiempo_ideal_min = st.number_input("⏱️ Tiempo ideal por OP (min)", min_value=1, value=60)
+
+# Botón para mostrar historial
+if st.button("Mostrar Historial"):
+
+    if user_role(st.session_state.username) in ["maestro", "planificador"]:
+        historial_bruto = obtener_historial()
+
+        historial = []
+        for numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion in historial_bruto:
+            entrada = datetime.fromisoformat(t_ini)
+            salida = datetime.fromisoformat(t_fin)
+            dur_min = round(duracion / 60, 2)
+
+            if fecha_inicio <= entrada.date() <= fecha_fin:
+                historial.append({
+                    "Número OP": numero_ome,
+                    "Cliente": cliente,
+                    "Fecha Inicio": entrada.strftime("%Y-%m-%d"),
+                    "Hora Inicio": entrada.strftime("%H:%M:%S"),
+                    "Etapa": etapa,
+                    "Duración (seg)": duracion  # en segundos
+                })
+
+        df = pd.DataFrame(historial)
+
+        if df.empty:
+            st.warning("⚠️ No hay datos para el rango seleccionado.")
+        else:
+            # Pivotear: etapas como columnas
+            df_pivot = df.pivot_table(index=["Número OP", "Cliente", "Fecha Inicio", "Hora Inicio"],
+                                      columns="Etapa",
+                                      values="Duración (seg)",
+                                      aggfunc="sum").fillna(0)
+
+            # Total y eficiencia
+            df_pivot["Total (seg)"] = df_pivot.sum(axis=1)
+            df_pivot["Total HH:MM:SS"] = df_pivot["Total (seg)"].apply(lambda x: str(timedelta(seconds=int(x))))
+            tiempo_ideal_seg = tiempo_ideal_min * 60
+            df_pivot["Eficiencia (%)"] = round((tiempo_ideal_seg / df_pivot["Total (seg)"]) * 100, 1)
+
+            # Convertir cada columna a formato HH:MM:SS
+            for etapa_col in df_pivot.columns:
+                if etapa_col not in ["Total (seg)", "Eficiencia (%)", "Total HH:MM:SS"]:
+                    df_pivot[etapa_col] = df_pivot[etapa_col].apply(lambda x: str(timedelta(seconds=int(x))))
+
+            # Organizar columnas
+            df_pivot = df_pivot.reset_index()
+            columnas_ordenadas = ["Número OP", "Cliente", "Fecha Inicio", "Hora Inicio"] + \
+                                 [c for c in df_pivot.columns if c not in ["Número OP", "Cliente", "Fecha Inicio", "Hora Inicio"]]
+            df_pivot = df_pivot[columnas_ordenadas]
+
+            # Mostrar
+            st.dataframe(df_pivot, use_container_width=True)
+
+            # Descargar como Excel
+            excel_buffer = pd.ExcelWriter("historial_temp.xlsx", engine="openpyxl")
+            df_pivot.to_excel(excel_buffer, index=False, sheet_name="Historial")
+            excel_buffer.close()
+
+            with open("historial_temp.xlsx", "rb") as f:
+                st.download_button(
+                    label="📥 Descargar Historial en Excel",
+                    data=f.read(),
+                    file_name="historial_produccion.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
     else:
-        st.info("No tienes permiso para ver el historial completo.")
+        st.info("🔒 No tienes permiso para ver el historial completo.")
 
 else:
     st.info("Haz clic en 'Mostrar Historial' para ver los datos.")
