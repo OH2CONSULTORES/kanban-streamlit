@@ -27,6 +27,10 @@ def crear_base_datos():
     conn.commit()
     conn.close()
 
+
+
+
+
 def crear_tabla_usuarios():
     conn = sqlite3.connect('historial.db')
     cursor = conn.cursor()
@@ -129,14 +133,20 @@ def can_move_op(user, etapa_op):
 # --- INICIALIZACIÓN DE ESTADO ---
 if "users" not in st.session_state:
     st.session_state.users = cargar_usuarios()
+
+    # Si la tabla está vacía, se insertan los usuarios por defecto
     if not st.session_state.users:
-        st.session_state.users = {
+        usuarios_por_defecto = {
             "admin": {"password": hash_password("admin123"), "role": "maestro"},
             "planificador": {"password": hash_password("plan123"), "role": "planificador"},
             "trabajador_troquel": {"password": hash_password("troquel123"), "role": "trabajador", "etapa": "Troquelado"},
         }
-        for usuario, data in st.session_state.users.items():
+
+        for usuario, data in usuarios_por_defecto.items():
             guardar_usuario(usuario, data["password"], data["role"], data.get("etapa"))
+
+        # Vuelve a cargar los usuarios desde la BD actualizada
+        st.session_state.users = cargar_usuarios()
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -162,6 +172,8 @@ def login():
 if not st.session_state.logged_in:
     login()
     st.stop()
+
+
 
 # --- PÁGINA PRINCIPAL ---
 st.title(f"KANBAN DE PRODUCCIÓN LEAN - Usuario: {st.session_state.username} ({user_role(st.session_state.username)})")
