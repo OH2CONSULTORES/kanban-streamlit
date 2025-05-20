@@ -1,5 +1,3 @@
-from datetime import datetime
-# Funciones de BD
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -26,10 +24,6 @@ def crear_base_datos():
     ''')
     conn.commit()
     conn.close()
-
-
-
-
 
 def crear_tabla_usuarios():
     conn = sqlite3.connect('historial.db')
@@ -64,11 +58,16 @@ def cargar_usuarios():
     conn.close()
     user_dict = {}
     for u, p, r, e in usuarios:
-        user_dict[u] = {"password": p, "role": r}
+        # Si la contraseña no tiene formato hash (64 caracteres hex), la hasheamos y guardamos
+        if len(p) != 64:
+            p_hashed = hash_password(p)
+            guardar_usuario(u, p_hashed, r, e)
+        else:
+            p_hashed = p
+        user_dict[u] = {"password": p_hashed, "role": r}
         if r == "trabajador":
             user_dict[u]["etapa"] = e
     return user_dict
-
 
 def eliminar_usuario(username):
     conn = sqlite3.connect('historial.db')
@@ -134,19 +133,25 @@ def can_move_op(user, etapa_op):
 if "users" not in st.session_state:
     st.session_state.users = cargar_usuarios()
 
-    # Si la tabla está vacía, se insertan los usuarios por defecto
-    if not st.session_state.users:
-        usuarios_por_defecto = {
-            "admin": {"password": hash_password("admin123"), "role": "maestro"},
-            "planificador": {"password": hash_password("plan123"), "role": "planificador"},
-            "trabajador_troquel": {"password": hash_password("troquel123"), "role": "trabajador", "etapa": "Troquelado"},
-        }
+    # Usuarios por defecto
+    usuarios_por_defecto = {
+        "admin": {"password": hash_password("admin123"), "role": "maestro"},
+        "planificador": {"password": hash_password("plan123"), "role": "planificador"},
+        "trabajador_troquel": {"password": hash_password("troquel123"), "role": "trabajador", "etapa": "Troquelado"},
+    }
 
-        for usuario, data in usuarios_por_defecto.items():
+    # Agrega o actualiza usuarios por defecto si es necesario
+    for usuario, data in usuarios_por_defecto.items():
+        if usuario not in st.session_state.users:
             guardar_usuario(usuario, data["password"], data["role"], data.get("etapa"))
+        else:
+            # Verifica si la contraseña almacenada está hasheada
+            contrasena_actual = st.session_state.users[usuario]["password"]
+            if len(contrasena_actual) != 64:  # No está hasheada
+                guardar_usuario(usuario, data["password"], data["role"], data.get("etapa"))
 
-        # Vuelve a cargar los usuarios desde la BD actualizada
-        st.session_state.users = cargar_usuarios()
+    # Vuelve a cargar usuarios actualizados
+    st.session_state.users = cargar_usuarios()
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -164,8 +169,9 @@ def login():
         if check_password(username, password):
             st.session_state.logged_in = True
             st.session_state.username = username
-            st.success(f"Bienvenido, {username} ({user_role(username)})")
-            st.experimental_rerun()
+            etapa_texto = st.session_state.users[username].get("etapa", "Todas")
+            st.success(f"Bienvenido, {username} ({user_role(username)}) - Etapa asignada: {etapa_texto}")
+            st.rerun()
         else:
             st.error("Usuario o contraseña incorrectos.")
 
@@ -174,9 +180,40 @@ if not st.session_state.logged_in:
     st.stop()
 
 
-
 # --- PÁGINA PRINCIPAL ---
 st.title(f"KANBAN DE PRODUCCIÓN LEAN - Usuario: {st.session_state.username} ({user_role(st.session_state.username)})")
+
+
+# Mostrar etapa asignada si es trabajador
+user_data = st.session_state.users.get(st.session_state.username)
+etapa_asignada = user_data.get("etapa", "Todas") if user_data else "Todas"
+st.markdown(f"### 🏭 Etapa asignada: **{etapa_asignada}**")
+
+# Mostrar solo las OPs en la etapa del trabajador
+if user_role(st.session_state.username) == "trabajador":
+    st.markdown("### 📋 Órdenes en tu etapa")
+    ops_en_etapa = False
+    for op in st.session_state.ops:
+        # En tu estructura, la etapa actual está en 'etapas[actual]'
+        etapa_actual = op['etapas'][op['actual']]
+        if etapa_actual == etapa_asignada:
+            ops_en_etapa = True
+            st.markdown(f"- OP: **{op['numero_op']}** | Cliente: {op['cliente']} | Etapa: {etapa_actual}")
+            if st.button(f"➡️ Mover OP {op['numero_op']}", key=f"mover_{op['numero_op']}"):
+                siguiente_index = ETAPAS.index(etapa_actual) + 1
+                if siguiente_index < len(ETAPAS):
+                    nueva_etapa = ETAPAS[siguiente_index]
+                    # Solo mover si la nueva etapa está dentro de las etapas definidas para esa OP
+                    if nueva_etapa in op['etapas']:
+                        op['actual'] = op['etapas'].index(nueva_etapa)
+                        st.success(f"OP {op['numero_op']} movida a etapa: {nueva_etapa}")
+                    else:
+                        st.warning(f"No puedes mover la OP a la etapa {nueva_etapa} porque no está asignada a esta OP.")
+                else:
+                    st.warning("Esta OP ya está en la última etapa.")
+    if not ops_en_etapa:
+        st.info("No hay órdenes asignadas a tu etapa actualmente.")
+
 
 # Mostrar historial si se presiona el botón
 if st.button("Mostrar Historial"):
@@ -184,12 +221,7 @@ if st.button("Mostrar Historial"):
     df_historial = pd.DataFrame(historial, columns=["Número OP", "Cliente", "Fecha Inicio", "Fecha Fin", "Etapa", "Inicio", "Fin", "Duración (min)"])
     st.dataframe(df_historial)
 
-# Aquí continúa el código original para gestión de usuarios, agregar OPs, mostrar tablero Kanban, mover OPs, etc.
-# (omitido por brevedad pero sin modificar esa lógica)
 
-
-
-# --- ADMINISTRACIÓN DE USUARIOS (solo maestro) ---
 # --- ADMINISTRACIÓN DE USUARIOS (solo maestro) ---
 if user_role(st.session_state.username) == "maestro":
     with st.expander("👤 Gestión de Usuarios (solo Maestro)"):
@@ -243,7 +275,7 @@ if user_role(st.session_state.username) == "maestro":
                 del st.session_state.users[u]
                 eliminar_usuario(u)
                 st.success(f"Usuario '{u}' eliminado.")
-                st.experimental_rerun()  # refrescar interfaz
+                st.rerun()  # refrescar interfaz
 
 
 # --- AGREGAR NUEVA OP (solo maestro y planificador) ---
@@ -327,7 +359,6 @@ kanban_html += '</div>'
 st.markdown(kanban_html, unsafe_allow_html=True)
 
 # --- BOTONES PARA AVANZAR OP ---
-
 st.subheader("Mover OP a siguiente etapa")
 
 for idx, op in enumerate(st.session_state.ops):
@@ -346,156 +377,8 @@ for idx, op in enumerate(st.session_state.ops):
             else:
                 st.success(f"OP {op['numero_op']} finalizada.")
 
-# --- HISTORIAL Y ANÁLISIS ---
-
-def exportar_excel(ops):
-    output = BytesIO()
-    df_rows = []
-    for op in ops:
-        for etapa, tiempos in op["tiempos"].items():
-            entrada, salida = tiempos
-            if entrada and salida:
-                duracion_min = (salida - entrada).total_seconds() / 60
-                df_rows.append({
-                    "Número OP": op["numero_op"],
-                    "Cliente": op["cliente"],
-                    "Etapa": etapa,
-                    "Entrada": entrada.strftime('%Y-%m-%d %H:%M:%S'),
-                    "Salida": salida.strftime('%Y-%m-%d %H:%M:%S'),
-                    "Duración (min)": round(duracion_min, 2)
-                })
-
-                # Insertar en base de datos
-                insertar_historial(
-                    numero_ome=op["numero_op"],
-                    cliente=op["cliente"],
-                    f_ini=min(t[0] for t in op["tiempos"].values() if t[0]).strftime('%Y-%m-%d'),
-                    f_fin=max(t[1] for t in op["tiempos"].values() if t[1]).strftime('%Y-%m-%d'),
-                    etapa=etapa,
-                    t_ini=entrada.strftime('%H:%M:%S'),
-                    t_fin=salida.strftime('%H:%M:%S'),
-                    duracion=round(duracion_min, 2)
-                )
-
-    df = pd.DataFrame(df_rows)
-    df.to_excel(output, index=False)
-    return output
-
-  # Tu función de base de datos
-
-if st.button("📥 Exportar historial de OPs a Excel"):
-    if st.session_state.ops:
-        excel_file = exportar_excel(st.session_state.ops)
-        st.download_button(
-            label="Descargar Excel",
-            data=excel_file,
-            file_name="historial_ops.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.warning("No hay OPs para exportar.")
-
-
-# --- HISTORIAL Y ANÁLISIS ---
-st.subheader("📜 Historial de Producción")
-if st.button("📜 Mostrar Historial desde la BD"):
-    registros = obtener_historial()
-    if registros:
-        df_historial = pd.DataFrame(registros, columns=["N° OP", "Cliente", "Fecha Inicio", "Fecha Fin", "Etapa", "Hora Inicio", "Hora Fin", "Duración (min)"])
-        st.dataframe(df_historial)
-    else:
-        st.info("No hay registros en el historial.")
-
-
-# Filtros
-col1, col2, col3 = st.columns(3)
-with col1:
-    fecha_inicio = st.date_input("📅 Fecha de inicio", value=datetime.today())
-with col2:
-    fecha_fin = st.date_input("📅 Fecha de fin", value=datetime.today())
-with col3:
-    tiempo_ideal_min = st.number_input("⏱️ Tiempo ideal por OP (min)", min_value=1, value=60)
-
-# Botón para mostrar historial
-if st.button("Mostrar Historial eneral"):
-
-    if user_role(st.session_state.username) in ["maestro", "planificador"]:
-        historial_bruto = obtener_historial()
-
-        historial = []
-        for numero_ome, cliente, f_ini, f_fin, etapa, t_ini, t_fin, duracion in historial_bruto:
-            entrada = datetime.fromisoformat(t_ini)
-            salida = datetime.fromisoformat(t_fin)
-            dur_min = round(duracion / 60, 2)
-
-            if fecha_inicio <= entrada.date() <= fecha_fin:
-                historial.append({
-                    "Número OP": numero_ome,
-                    "Cliente": cliente,
-                    "Etapa": etapa,
-                    "Entrada": entrada,
-                    "Salida": salida,
-                    "Duración (min)": dur_min
-                })
-
-        if not historial:
-            st.warning("⚠️ No hay datos para el rango seleccionado.")
-        else:
-            df = pd.DataFrame(historial)
-
-            # Crear columnas dinámicas por etapa
-            etapas = df["Etapa"].unique()
-            registros = []
-
-            for (numero_op, cliente), group in df.groupby(["Número OP", "Cliente"]):
-                registro = {"Número OP": numero_op, "Cliente": cliente}
-                for _, fila in group.iterrows():
-                    etapa = fila["Etapa"]
-                    registro[f"{etapa} Entrada"] = fila["Entrada"].strftime("%Y-%m-%d %H:%M:%S")
-                    registro[f"{etapa} Salida"] = fila["Salida"].strftime("%Y-%m-%d %H:%M:%S")
-                    registro[f"{etapa} Duración"] = str(timedelta(minutes=fila["Duración (min)"]))
-                registros.append(registro)
-
-            df_final = pd.DataFrame(registros)
-
-            # Calcular Total y Eficiencia
-            def calcular_total_min(row):
-                total = 0
-                for etapa in etapas:
-                    valor = row.get(f"{etapa} Duración", None)
-                    if valor:
-                        partes = valor.split(':')
-                        minutos = int(partes[0]) * 60 + int(partes[1]) + int(partes[2]) / 60
-                        total += minutos
-                return total
-
-            df_final["Total (min)"] = df_final.apply(calcular_total_min, axis=1)
-            df_final["Total HH:MM:SS"] = df_final["Total (min)"].apply(lambda x: str(timedelta(minutes=x)))
-            tiempo_ideal_seg = tiempo_ideal_min * 60
-            df_final["Eficiencia (%)"] = round((tiempo_ideal_seg / (df_final["Total (min)"] * 60)) * 100, 1)
-
-            # Mostrar tabla
-            st.dataframe(df_final, use_container_width=True)
-
-            # Exportar a Excel
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, sheet_name='Historial')
-            st.download_button(
-                label="📥 Descargar Historial en Excel",
-                data=output.getvalue(),
-                file_name="historial_produccion.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-    else:
-        st.info("🔒 No tienes permiso para ver el historial completo.")
-else:
-    st.info("Haz clic en 'Mostrar Historial' para ver los datos.")
-
-
 # --- OPCIÓN DE CERRAR SESIÓN ---
 if st.button("Cerrar sesión"):
     st.session_state.logged_in = False
     st.session_state.username = None
-    st.experimental_rerun()
+    st.rerun()
